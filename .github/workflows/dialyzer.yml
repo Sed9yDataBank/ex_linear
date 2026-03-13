@@ -1,0 +1,55 @@
+name: Dialyzer
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  optional-dialyzer:
+    name: optional-dialyzer
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    env:
+      MIX_ENV: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      - name: Cache deps, build, and PLTs
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            priv/plts
+          key: dialyzer-${{ runner.os }}-${{ hashFiles('.tool-versions', 'mix.lock') }}
+          restore-keys: |
+            dialyzer-${{ runner.os }}-${{ hashFiles('.tool-versions') }}-
+            dialyzer-${{ runner.os }}-
+
+      - name: Install Hex and Rebar
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run Dialyzer (non-blocking)
+        run: mix dialyzer
