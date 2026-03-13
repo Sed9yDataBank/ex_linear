@@ -12,7 +12,7 @@ defmodule ExLinear.Config do
       # From keyword list (e.g. from Application config)
       config = ExLinear.Config.from_opts(
         api_key: System.get_env("LINEAR_API_KEY"),
-        endpoint: "https://api.linear.app/graphql",
+        endpoint: ExLinear.Config.default_endpoint(),
         project_slug: "ENG",
         active_states: ["Todo", "In Progress"],
         assignee: "me"
@@ -42,6 +42,12 @@ defmodule ExLinear.Config do
   @default_endpoint "https://api.linear.app/graphql"
 
   @doc """
+  Returns the default Linear GraphQL endpoint URL.
+  """
+  @spec default_endpoint() :: String.t()
+  def default_endpoint, do: @default_endpoint
+
+  @doc """
   Builds a config struct from a keyword list.
 
   Application config (`:ex_linear`) may also include:
@@ -50,7 +56,7 @@ defmodule ExLinear.Config do
 
   Options:
   - `:api_key` – Linear API token (required for API calls)
-  - `:endpoint` – GraphQL endpoint (default: `"https://api.linear.app/graphql"` or `:ex_linear` `:api_url`)
+  - `:endpoint` – GraphQL endpoint (default: `default_endpoint/0` or `:ex_linear` `:api_url`)
   - `:project_slug` – Project slug for issue listing
   - `:active_states` – List of state names for candidate issues
   - `:assignee` – Assignee filter: `"me"` (viewer), user ID, or `nil` for no filter
