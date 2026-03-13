@@ -88,7 +88,7 @@ defmodule ExLinear.Config do
   """
   @spec from_application() :: t()
   def from_application do
-    env = Application.get_all_env(:ex_linear) || []
+    env = Application.get_all_env(:ex_linear)
 
     from_opts(
       api_key: Keyword.get(env, :api_key),
