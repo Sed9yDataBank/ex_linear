@@ -14,9 +14,11 @@ defmodule ExLinear.Client do
   @doc """
   Low-level GraphQL request. Uses `config` for API key and endpoint.
 
+  The HTTP implementation is taken from `Application.get_env(:ex_linear, :request_fun)`
+  when set (e.g. in tests); otherwise the default Req-based implementation is used.
+
   Options:
   - `:operation_name` – optional operation name for the request
-  - `:request_fun` – optional 2-arity function `(payload, headers) -> result` for testing
   """
   @spec graphql(Config.t() | keyword(), String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -25,10 +27,9 @@ defmodule ExLinear.Client do
              is_map(variables) and is_list(opts) do
     c = normalize_config(config)
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
-    request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/3)
 
     with {:ok, headers} <- graphql_headers(c),
-         {:ok, %{status: 200, body: body}} <- request_fun.(c, payload, headers) do
+         {:ok, %{status: 200, body: body}} <- request_impl().(c, payload, headers) do
       {:ok, body}
     else
       {:ok, response} ->
@@ -43,6 +44,10 @@ defmodule ExLinear.Client do
         Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
         {:error, {:linear_api_request, reason}}
     end
+  end
+
+  defp request_impl do
+    Application.get_env(:ex_linear, :request_fun, &post_graphql_request/3)
   end
 
   defp normalize_config(opts) when is_list(opts), do: Config.from_opts(opts)

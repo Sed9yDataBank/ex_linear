@@ -44,6 +44,10 @@ defmodule ExLinear.Config do
   @doc """
   Builds a config struct from a keyword list.
 
+  Application config (`:ex_linear`) may also include:
+  - `:request_fun` – optional 3-arity `(config, payload, headers) -> result` used by the client
+    for all GraphQL requests. When set (e.g. in tests), it replaces the default HTTP implementation.
+
   Options:
   - `:api_key` – Linear API token (required for API calls)
   - `:endpoint` – GraphQL endpoint (default: `"https://api.linear.app/graphql"` or `:ex_linear` `:api_url`)
