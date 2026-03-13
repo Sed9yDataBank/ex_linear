@@ -2,6 +2,8 @@
 
 A Linear GraphQL client for Elixir. Fetch issues, run custom queries, and plug in your own config.
 
+<br>
+
 <div align="center">
   <img src="assets/linear-logo-light.png" alt="Linear" width="160" />
 </div>
