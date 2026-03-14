@@ -433,6 +433,142 @@ defmodule ExLinear.ClientTest do
     end
   end
 
+  describe "fetch_issue_states_by_ids/2" do
+    test "returns empty list for empty ids" do
+      assert {:ok, []} = Client.fetch_issue_states_by_ids(@base_config, [])
+    end
+
+    test "returns decoded issues in request order with normalization" do
+      raw_issue = %{
+        "id" => "issue-1",
+        "identifier" => "MT-1",
+        "title" => "Blocked todo",
+        "description" => "Needs dependency",
+        "priority" => 2,
+        "state" => %{"name" => "Todo"},
+        "branchName" => "mt-1",
+        "url" => "https://example.org/issues/MT-1",
+        "assignee" => %{"id" => "user-1"},
+        "labels" => %{"nodes" => [%{"name" => "Backend"}]},
+        "inverseRelations" => %{
+          "nodes" => [
+            %{
+              "type" => "blocks",
+              "issue" => %{
+                "id" => "issue-2",
+                "identifier" => "MT-2",
+                "state" => %{"name" => "In Progress"}
+              }
+            },
+            %{
+              "type" => "relatesTo",
+              "issue" => %{
+                "id" => "issue-3",
+                "identifier" => "MT-3",
+                "state" => %{"name" => "Done"}
+              }
+            }
+          ]
+        },
+        "createdAt" => "2026-01-01T00:00:00Z",
+        "updatedAt" => "2026-01-02T00:00:00Z"
+      }
+
+      set_request_fun(fn _c, payload, _headers ->
+        ids = (payload["variables"] || %{})[:ids]
+        nodes = Enum.map(ids, fn id -> Map.put(raw_issue, "id", id) end)
+
+        {:ok,
+         %{
+           status: 200,
+           body: %{"data" => %{"issues" => %{"nodes" => nodes}}}
+         }}
+      end)
+
+      assert {:ok, [%Issue{} = issue | _]} =
+               Client.fetch_issue_states_by_ids(@base_config, ["issue-1"])
+
+      assert issue.id == "issue-1"
+      assert issue.identifier == "MT-1"
+      assert issue.state == "Todo"
+      assert issue.priority == 2
+      assert issue.assignee_id == "user-1"
+      assert issue.labels == ["backend"]
+      assert issue.blocked_by == [%{id: "issue-2", identifier: "MT-2", state: "In Progress"}]
+      assert issue.assignee_matches_filter == true
+    end
+
+    test "marks assignee_matches_filter false when assignee does not match filter" do
+      config = @base_config ++ [assignee: "user-2"]
+
+      raw_issue = %{
+        "id" => "issue-99",
+        "identifier" => "MT-99",
+        "title" => "Other",
+        "state" => %{"name" => "Todo"},
+        "assignee" => %{"id" => "user-1"},
+        "labels" => %{"nodes" => []},
+        "inverseRelations" => %{"nodes" => []}
+      }
+
+      set_request_fun(fn _c, payload, _headers ->
+        ids = (payload["variables"] || %{})[:ids]
+        nodes = Enum.map(ids, fn id -> Map.put(raw_issue, "id", id) end)
+        {:ok, %{status: 200, body: %{"data" => %{"issues" => %{"nodes" => nodes}}}}}
+      end)
+
+      assert {:ok, [%Issue{} = issue]} =
+               Client.fetch_issue_states_by_ids(config, ["issue-99"])
+
+      refute issue.assignee_matches_filter
+    end
+
+    test "paginates by 50 and preserves order across pages" do
+      issue_ids = Enum.map(1..55, &"issue-#{&1}")
+      first_batch = Enum.take(issue_ids, 50)
+      second_batch = Enum.drop(issue_ids, 50)
+
+      raw_issue = fn id ->
+        suffix = String.replace_prefix(id, "issue-", "")
+
+        %{
+          "id" => id,
+          "identifier" => "MT-#{suffix}",
+          "title" => "Issue #{suffix}",
+          "state" => %{"name" => "In Progress"},
+          "labels" => %{"nodes" => []},
+          "inverseRelations" => %{"nodes" => []}
+        }
+      end
+
+      set_request_fun(fn _c, payload, _headers ->
+        ids = (payload["variables"] || %{})[:ids]
+        send(self(), {:fetch_page, ids})
+        nodes = Enum.map(ids, raw_issue)
+        {:ok, %{status: 200, body: %{"data" => %{"issues" => %{"nodes" => nodes}}}}}
+      end)
+
+      assert {:ok, issues} = Client.fetch_issue_states_by_ids(@base_config, issue_ids)
+
+      assert length(issues) == 55
+      assert Enum.map(issues, & &1.id) == issue_ids
+
+      assert_receive {:fetch_page, ^first_batch}
+      assert_receive {:fetch_page, ^second_batch}
+    end
+
+    test "query uses neutral operation name IssuesById" do
+      set_request_fun(fn _c, payload, _headers ->
+        assert payload["query"] =~ "IssuesById"
+        send(self(), :seen_operation)
+        {:ok, %{status: 200, body: %{"data" => %{"issues" => %{"nodes" => []}}}}}
+      end)
+
+      Client.fetch_issue_states_by_ids(@base_config, ["id-1"])
+      assert_receive :seen_operation
+    end
+  end
+
   describe "ExLinear.Issue" do
     test "label_names returns labels" do
       issue = %Issue{id: "1", labels: ["frontend", "infra"]}

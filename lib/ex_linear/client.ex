@@ -65,6 +65,47 @@ defmodule ExLinear.Client do
   }
   """
 
+  @query_by_ids """
+  query IssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
+    issues(filter: {id: {in: $ids}}, first: $first) {
+      nodes {
+        id
+        identifier
+        title
+        description
+        priority
+        state {
+          name
+        }
+        branchName
+        url
+        assignee {
+          id
+        }
+        labels {
+          nodes {
+            name
+          }
+        }
+        inverseRelations(first: $relationFirst) {
+          nodes {
+            type
+            issue {
+              id
+              identifier
+              state {
+                name
+              }
+            }
+          }
+        }
+        createdAt
+        updatedAt
+      }
+    }
+  }
+  """
+
   @doc """
   Low-level GraphQL request. Uses `config` for API key and endpoint.
 
@@ -145,6 +186,26 @@ defmodule ExLinear.Client do
     end
   end
 
+  @doc """
+  Fetches issues by IDs and returns them in the same order as the requested IDs.
+  """
+  @spec fetch_issue_states_by_ids(Config.t() | keyword(), [String.t()]) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issue_states_by_ids(config, issue_ids) when is_list(issue_ids) do
+    c = normalize_config(config)
+    ids = Enum.uniq(issue_ids)
+
+    case ids do
+      [] ->
+        {:ok, []}
+
+      ids ->
+        with {:ok, assignee_filter} <- routing_assignee_filter(c) do
+          do_fetch_issue_states(c, ids, assignee_filter)
+        end
+    end
+  end
+
   defp normalize_config(opts) when is_list(opts), do: Config.from_opts(opts)
   defp normalize_config(%Config{} = c), do: c
 
@@ -201,6 +262,79 @@ defmodule ExLinear.Client do
 
   defp finalize_paginated_issues(acc_issues) when is_list(acc_issues),
     do: Enum.reverse(acc_issues)
+
+  defp do_fetch_issue_states(c, ids, assignee_filter) do
+    do_fetch_issue_states_page(c, ids, assignee_filter, &graphql/4, [], issue_order_index(ids))
+  end
+
+  defp do_fetch_issue_states_page(
+         _c,
+         [],
+         _assignee_filter,
+         _graphql_fun,
+         acc_issues,
+         issue_order_index
+       ) do
+    acc_issues
+    |> finalize_paginated_issues()
+    |> sort_issues_by_requested_ids(issue_order_index)
+    |> then(&{:ok, &1})
+  end
+
+  defp do_fetch_issue_states_page(
+         c,
+         ids,
+         assignee_filter,
+         graphql_fun,
+         acc_issues,
+         issue_order_index
+       ) do
+    {batch_ids, rest_ids} = Enum.split(ids, @issue_page_size)
+
+    case graphql_fun.(
+           c,
+           @query_by_ids,
+           %{
+             ids: batch_ids,
+             first: length(batch_ids),
+             relationFirst: @issue_page_size
+           },
+           []
+         ) do
+      {:ok, body} ->
+        with {:ok, issues} <- decode_linear_response(body, assignee_filter) do
+          updated_acc = prepend_page_issues(issues, acc_issues)
+
+          do_fetch_issue_states_page(
+            c,
+            rest_ids,
+            assignee_filter,
+            graphql_fun,
+            updated_acc,
+            issue_order_index
+          )
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp issue_order_index(ids) when is_list(ids) do
+    ids
+    |> Enum.with_index()
+    |> Map.new()
+  end
+
+  defp sort_issues_by_requested_ids(issues, issue_order_index)
+       when is_list(issues) and is_map(issue_order_index) do
+    fallback_index = map_size(issue_order_index)
+
+    Enum.sort_by(issues, fn
+      %Issue{id: issue_id} -> Map.get(issue_order_index, issue_id, fallback_index)
+      _ -> fallback_index
+    end)
+  end
 
   defp build_graphql_payload(query, variables, operation_name) do
     %{
