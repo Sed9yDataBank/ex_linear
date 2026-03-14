@@ -123,6 +123,28 @@ defmodule ExLinear.Client do
     end
   end
 
+  @doc """
+  Fetches issues in the configured project that are in any of the given state names.
+  """
+  @spec fetch_issues_by_states(Config.t() | keyword(), [String.t()]) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issues_by_states(config, state_names) when is_list(state_names) do
+    c = normalize_config(config)
+    normalized_states = Enum.map(state_names, &to_string/1) |> Enum.uniq()
+
+    if normalized_states == [] do
+      {:ok, []}
+    else
+      project_slug = c.project_slug
+
+      cond do
+        is_nil(c.api_key) -> {:error, :missing_linear_api_token}
+        is_nil(project_slug) -> {:error, :missing_linear_project_slug}
+        true -> do_fetch_by_states(c, project_slug, normalized_states, nil)
+      end
+    end
+  end
+
   defp normalize_config(opts) when is_list(opts), do: Config.from_opts(opts)
   defp normalize_config(%Config{} = c), do: c
 
