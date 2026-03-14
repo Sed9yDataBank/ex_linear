@@ -280,6 +280,159 @@ defmodule ExLinear.ClientTest do
     end
   end
 
+  describe "fetch_issues_by_states/2" do
+    test "returns empty list for empty state names" do
+      assert {:ok, []} = Client.fetch_issues_by_states(@base_config, [])
+    end
+
+    test "returns error when api_key is nil" do
+      assert {:error, :missing_linear_api_token} =
+               Client.fetch_issues_by_states(
+                 [endpoint: Config.default_endpoint(), project_slug: "ENG"],
+                 ["Todo"]
+               )
+    end
+
+    test "returns error when project_slug is nil" do
+      assert {:error, :missing_linear_project_slug} =
+               Client.fetch_issues_by_states(
+                 [api_key: "key", endpoint: Config.default_endpoint()],
+                 ["Todo"]
+               )
+    end
+
+    test "uses request_fun from config and decodes issues" do
+      set_request_fun(fn _c, payload, _headers ->
+        vars = payload["variables"] || %{}
+        assert vars[:projectSlug] == "ENG"
+        assert vars[:stateNames] == ["Todo"]
+        assert payload["query"] =~ "IssuesByProjectAndStates"
+
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "data" => %{
+               "issues" => %{
+                 "nodes" => [
+                   %{
+                     "id" => "i1",
+                     "identifier" => "MT-1",
+                     "title" => "T",
+                     "state" => %{"name" => "Todo"},
+                     "labels" => %{"nodes" => []},
+                     "inverseRelations" => %{"nodes" => []}
+                   }
+                 ],
+                 "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}
+               }
+             }
+           }
+         }}
+      end)
+
+      assert {:ok, [%Issue{} = issue]} =
+               Client.fetch_issues_by_states(@base_config, ["Todo"])
+
+      assert issue.id == "i1"
+      assert issue.identifier == "MT-1"
+    end
+
+    test "returns multiple issues with full normalization and normalizes state names" do
+      # State names normalized: to_string/1 + uniq (42 -> "42", duplicate "Todo" removed)
+      set_request_fun(fn _c, payload, _headers ->
+        vars = payload["variables"] || %{}
+        assert vars[:projectSlug] == "ENG"
+        assert vars[:stateNames] == ["Todo", "In Progress", "42"]
+        assert payload["query"] =~ "IssuesByProjectAndStates"
+
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "data" => %{
+               "issues" => %{
+                 "nodes" => [
+                   %{
+                     "id" => "issue-a",
+                     "identifier" => "MT-A",
+                     "title" => "First",
+                     "description" => "Desc A",
+                     "priority" => 1,
+                     "state" => %{"name" => "Todo"},
+                     "branchName" => "feature/a",
+                     "url" => "https://linear.app/team/issue/MT-A",
+                     "assignee" => %{"id" => "usr-1"},
+                     "labels" => %{"nodes" => [%{"name" => "Frontend"}, %{"name" => "P0"}]},
+                     "inverseRelations" => %{
+                       "nodes" => [
+                         %{
+                           "type" => "blocks",
+                           "issue" => %{
+                             "id" => "issue-x",
+                             "identifier" => "MT-X",
+                             "state" => %{"name" => "Done"}
+                           }
+                         }
+                       ]
+                     },
+                     "createdAt" => "2026-01-10T09:00:00Z",
+                     "updatedAt" => "2026-01-11T10:00:00Z"
+                   },
+                   %{
+                     "id" => "issue-b",
+                     "identifier" => "MT-B",
+                     "title" => "Second",
+                     "description" => nil,
+                     "priority" => 2,
+                     "state" => %{"name" => "In Progress"},
+                     "branchName" => nil,
+                     "url" => nil,
+                     "assignee" => nil,
+                     "labels" => %{"nodes" => []},
+                     "inverseRelations" => %{"nodes" => []},
+                     "createdAt" => nil,
+                     "updatedAt" => nil
+                   }
+                 ],
+                 "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}
+               }
+             }
+           }
+         }}
+      end)
+
+      assert {:ok, [issue_a, issue_b]} =
+               Client.fetch_issues_by_states(@base_config, ["Todo", "In Progress", 42, "Todo"])
+
+      assert issue_a.id == "issue-a"
+      assert issue_a.identifier == "MT-A"
+      assert issue_a.title == "First"
+      assert issue_a.description == "Desc A"
+      assert issue_a.priority == 1
+      assert issue_a.state == "Todo"
+      assert issue_a.branch_name == "feature/a"
+      assert issue_a.url == "https://linear.app/team/issue/MT-A"
+      assert issue_a.assignee_id == "usr-1"
+      assert issue_a.labels == ["frontend", "p0"]
+      assert issue_a.blocked_by == [%{id: "issue-x", identifier: "MT-X", state: "Done"}]
+      assert issue_a.assignee_matches_filter == true
+      assert %DateTime{year: 2026, month: 1, day: 10} = issue_a.created_at
+      assert %DateTime{year: 2026, month: 1, day: 11} = issue_a.updated_at
+
+      assert issue_b.id == "issue-b"
+      assert issue_b.identifier == "MT-B"
+      assert issue_b.title == "Second"
+      assert issue_b.priority == 2
+      assert issue_b.state == "In Progress"
+      assert issue_b.assignee_id == nil
+      assert issue_b.labels == []
+      assert issue_b.blocked_by == []
+      assert issue_b.created_at == nil
+      assert issue_b.updated_at == nil
+    end
+  end
+
   describe "ExLinear.Issue" do
     test "label_names returns labels" do
       issue = %Issue{id: "1", labels: ["frontend", "infra"]}
