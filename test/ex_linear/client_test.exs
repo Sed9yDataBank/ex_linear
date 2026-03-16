@@ -654,6 +654,45 @@ defmodule ExLinear.ClientTest do
     end
   end
 
+  describe "create_comment/3" do
+    test "succeeds when commentCreate.success is true" do
+      set_request_fun(fn _c, payload, _headers ->
+        vars = payload["variables"] || %{}
+        assert vars[:issueId] == "issue-1"
+        assert vars[:body] == "hello"
+        assert payload["query"] =~ "commentCreate"
+        {:ok, %{status: 200, body: %{"data" => %{"commentCreate" => %{"success" => true}}}}}
+      end)
+
+      assert :ok = Client.create_comment(@base_config, "issue-1", "hello")
+    end
+
+    test "returns comment_create_failed when success is false" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok, %{status: 200, body: %{"data" => %{"commentCreate" => %{"success" => false}}}}}
+      end)
+
+      assert {:error, :comment_create_failed} =
+               Client.create_comment(@base_config, "issue-1", "body")
+    end
+
+    test "propagates transport error" do
+      set_request_fun(fn _c, _payload, _headers -> {:error, :timeout} end)
+
+      assert {:error, {:linear_api_request, :timeout}} =
+               Client.create_comment(@base_config, "issue-1", "body")
+    end
+
+    test "returns comment_create_failed when response body is unexpected" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok, %{status: 200, body: %{"data" => %{}}}}
+      end)
+
+      assert {:error, :comment_create_failed} =
+               Client.create_comment(@base_config, "issue-1", "body")
+    end
+  end
+
   describe "ExLinear.Issue" do
     test "label_names returns labels" do
       issue = %Issue{id: "1", labels: ["frontend", "infra"]}

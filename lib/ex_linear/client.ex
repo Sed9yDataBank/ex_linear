@@ -128,6 +128,14 @@ defmodule ExLinear.Client do
   }
   """
 
+  @create_comment_mutation """
+  mutation CommentCreate($issueId: String!, $body: String!) {
+    commentCreate(input: {issueId: $issueId, body: $body}) {
+      success
+    }
+  }
+  """
+
   @doc """
   Low-level GraphQL request. Uses `config` for API key and endpoint.
 
@@ -244,6 +252,23 @@ defmodule ExLinear.Client do
       :ok
     else
       false -> {:error, :issue_update_failed}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Creates a comment on the given issue.
+  """
+  @spec create_comment(Config.t() | keyword(), String.t(), String.t()) :: :ok | {:error, term()}
+  def create_comment(config, issue_id, body) when is_binary(issue_id) and is_binary(body) do
+    c = normalize_config(config)
+
+    with {:ok, response} <-
+           graphql(c, @create_comment_mutation, %{issueId: issue_id, body: body}),
+         true <- get_in(response, ["data", "commentCreate", "success"]) == true do
+      :ok
+    else
+      false -> {:error, :comment_create_failed}
       {:error, reason} -> {:error, reason}
     end
   end
