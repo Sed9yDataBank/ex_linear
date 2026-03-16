@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   required-checks:
@@ -55,5 +56,8 @@ jobs:
       - name: Run Credo
         run: mix credo
 
-      - name: Run tests
-        run: mix test
+      - name: Tests & Coverage
+        uses: josecfreittas/elixir-coverage-feedback-action@v1.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          coverage_threshold: 80
