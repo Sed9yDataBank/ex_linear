@@ -569,6 +569,81 @@ defmodule ExLinear.ClientTest do
     end
   end
 
+  describe "create_issue/2" do
+    test "succeeds and returns normalized issue when issueCreate.success is true" do
+      set_request_fun(fn _c, payload, _headers ->
+        vars = payload["variables"] || %{}
+        input = vars["input"] || %{}
+        assert input["teamId"] == "team-1"
+        assert input["title"] == "New issue"
+        assert payload["query"] =~ "issueCreate"
+
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "data" => %{
+               "issueCreate" => %{
+                 "success" => true,
+                 "issue" => %{
+                   "id" => "issue-new",
+                   "identifier" => "MT-42",
+                   "title" => "New issue",
+                   "description" => nil,
+                   "priority" => 1,
+                   "state" => %{"name" => "Todo"},
+                   "branchName" => nil,
+                   "url" => "https://linear.app/team/issue/MT-42",
+                   "assignee" => nil,
+                   "labels" => %{"nodes" => []},
+                   "createdAt" => "2026-01-15T12:00:00Z",
+                   "updatedAt" => "2026-01-15T12:00:00Z"
+                 }
+               }
+             }
+           }
+         }}
+      end)
+
+      input = %Issue.CreateInput{team_id: "team-1", title: "New issue"}
+
+      assert {:ok, %Issue{} = issue} = Client.create_issue(@base_config, input)
+      assert issue.id == "issue-new"
+      assert issue.identifier == "MT-42"
+      assert issue.title == "New issue"
+      assert issue.state == "Todo"
+    end
+
+    test "returns issue_create_failed when success is false" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok, %{status: 200, body: %{"data" => %{"issueCreate" => %{"success" => false}}}}}
+      end)
+
+      input = %Issue.CreateInput{team_id: "team-1"}
+
+      assert {:error, :issue_create_failed} = Client.create_issue(@base_config, input)
+    end
+
+    test "returns issue_create_failed when issue is missing in response" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok, %{status: 200, body: %{"data" => %{"issueCreate" => %{"success" => true}}}}}
+      end)
+
+      input = %Issue.CreateInput{team_id: "team-1"}
+
+      assert {:error, :issue_create_failed} = Client.create_issue(@base_config, input)
+    end
+
+    test "propagates transport error" do
+      set_request_fun(fn _c, _payload, _headers -> {:error, :timeout} end)
+
+      input = %Issue.CreateInput{team_id: "team-1"}
+
+      assert {:error, {:linear_api_request, :timeout}} =
+               Client.create_issue(@base_config, input)
+    end
+  end
+
   describe "update_issue_state/3" do
     test "succeeds when state lookup and issueUpdate both succeed" do
       parent = self()

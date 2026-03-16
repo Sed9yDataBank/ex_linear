@@ -7,7 +7,7 @@ defmodule ExLinear.Client do
   """
 
   require Logger
-  alias ExLinear.{Config, Issue}
+  alias ExLinear.{Config, Issue, Issue.CreateInput}
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
@@ -97,6 +97,36 @@ defmodule ExLinear.Client do
                 name
               }
             }
+          }
+        }
+        createdAt
+        updatedAt
+      }
+    }
+  }
+  """
+
+  @issue_create_mutation """
+  mutation IssueCreate($input: IssueCreateInput!) {
+    issueCreate(input: $input) {
+      success
+      issue {
+        id
+        identifier
+        title
+        description
+        priority
+        state {
+          name
+        }
+        branchName
+        url
+        assignee {
+          id
+        }
+        labels {
+          nodes {
+            name
           }
         }
         createdAt
@@ -233,6 +263,26 @@ defmodule ExLinear.Client do
         with {:ok, assignee_filter} <- routing_assignee_filter(c) do
           do_fetch_issue_states(c, ids, assignee_filter)
         end
+    end
+  end
+
+  @doc """
+  Creates a new issue. Returns the created issue as `%Issue{}` or an error.
+  """
+  @spec create_issue(Config.t() | keyword(), CreateInput.t()) ::
+          {:ok, Issue.t()} | {:error, term()}
+  def create_issue(config, %CreateInput{} = input) do
+    c = normalize_config(config)
+    variables = %{"input" => CreateInput.to_input_map(input)}
+
+    with {:ok, body} <- graphql(c, @issue_create_mutation, variables),
+         true <- get_in(body, ["data", "issueCreate", "success"]) == true,
+         issue when is_map(issue) <- get_in(body, ["data", "issueCreate", "issue"]) do
+      {:ok, normalize_issue(issue, nil)}
+    else
+      false -> {:error, :issue_create_failed}
+      nil -> {:error, :issue_create_failed}
+      {:error, reason} -> {:error, reason}
     end
   end
 
