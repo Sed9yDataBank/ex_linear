@@ -106,6 +106,28 @@ defmodule ExLinear.Client do
   }
   """
 
+  @update_state_mutation """
+  mutation IssueUpdateState($issueId: String!, $stateId: String!) {
+    issueUpdate(id: $issueId, input: {stateId: $stateId}) {
+      success
+    }
+  }
+  """
+
+  @state_lookup_query """
+  query IssueStateResolve($issueId: String!, $stateName: String!) {
+    issue(id: $issueId) {
+      team {
+        states(filter: {name: {eq: $stateName}}, first: 1) {
+          nodes {
+            id
+          }
+        }
+      }
+    }
+  }
+  """
+
   @doc """
   Low-level GraphQL request. Uses `config` for API key and endpoint.
 
@@ -203,6 +225,26 @@ defmodule ExLinear.Client do
         with {:ok, assignee_filter} <- routing_assignee_filter(c) do
           do_fetch_issue_states(c, ids, assignee_filter)
         end
+    end
+  end
+
+  @doc """
+  Updates an issue's state by name (e.g. "Done"). Resolves the state ID from the issue's team.
+  """
+  @spec update_issue_state(Config.t() | keyword(), String.t(), String.t()) ::
+          :ok | {:error, term()}
+  def update_issue_state(config, issue_id, state_name)
+      when is_binary(issue_id) and is_binary(state_name) do
+    c = normalize_config(config)
+
+    with {:ok, state_id} <- resolve_state_id(c, issue_id, state_name),
+         {:ok, response} <-
+           graphql(c, @update_state_mutation, %{issueId: issue_id, stateId: state_id}),
+         true <- get_in(response, ["data", "issueUpdate", "success"]) == true do
+      :ok
+    else
+      false -> {:error, :issue_update_failed}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -334,6 +376,18 @@ defmodule ExLinear.Client do
       %Issue{id: issue_id} -> Map.get(issue_order_index, issue_id, fallback_index)
       _ -> fallback_index
     end)
+  end
+
+  defp resolve_state_id(c, issue_id, state_name) do
+    with {:ok, response} <-
+           graphql(c, @state_lookup_query, %{issueId: issue_id, stateName: state_name}),
+         state_id when is_binary(state_id) <-
+           get_in(response, ["data", "issue", "team", "states", "nodes", Access.at(0), "id"]) do
+      {:ok, state_id}
+    else
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :state_not_found}
+    end
   end
 
   defp build_graphql_payload(query, variables, operation_name) do

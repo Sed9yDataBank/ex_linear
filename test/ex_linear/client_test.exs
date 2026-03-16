@@ -569,6 +569,91 @@ defmodule ExLinear.ClientTest do
     end
   end
 
+  describe "update_issue_state/3" do
+    test "succeeds when state lookup and issueUpdate both succeed" do
+      parent = self()
+
+      set_request_fun(fn _c, payload, _headers ->
+        query = payload["query"] || ""
+        vars = payload["variables"] || %{}
+
+        if query =~ "issue(" and query =~ "states(" do
+          assert vars[:issueId] == "issue-1"
+          assert vars[:stateName] == "Done"
+          send(parent, :state_lookup_called)
+
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "issue" => %{
+                   "team" => %{"states" => %{"nodes" => [%{"id" => "state-1"}]}}
+                 }
+               }
+             }
+           }}
+        else
+          assert query =~ "issueUpdate"
+          assert vars[:issueId] == "issue-1"
+          assert vars[:stateId] == "state-1"
+          send(parent, :issue_update_called)
+          {:ok, %{status: 200, body: %{"data" => %{"issueUpdate" => %{"success" => true}}}}}
+        end
+      end)
+
+      assert :ok = Client.update_issue_state(@base_config, "issue-1", "Done")
+
+      assert_receive :state_lookup_called
+      assert_receive :issue_update_called
+    end
+
+    test "returns state_not_found when team states nodes empty" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "data" => %{
+               "issue" => %{"team" => %{"states" => %{"nodes" => []}}}
+             }
+           }
+         }}
+      end)
+
+      assert {:error, :state_not_found} =
+               Client.update_issue_state(@base_config, "issue-1", "Missing")
+    end
+
+    test "returns issue_update_failed when issueUpdate.success is false" do
+      set_request_fun(fn _c, payload, _headers ->
+        if payload["query"] =~ "issueUpdate" do
+          {:ok, %{status: 200, body: %{"data" => %{"issueUpdate" => %{"success" => false}}}}}
+        else
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "issue" => %{"team" => %{"states" => %{"nodes" => [%{"id" => "state-1"}]}}}
+               }
+             }
+           }}
+        end
+      end)
+
+      assert {:error, :issue_update_failed} =
+               Client.update_issue_state(@base_config, "issue-1", "Done")
+    end
+
+    test "propagates transport error from state lookup" do
+      set_request_fun(fn _c, _payload, _headers -> {:error, :timeout} end)
+
+      assert {:error, {:linear_api_request, :timeout}} =
+               Client.update_issue_state(@base_config, "issue-1", "Done")
+    end
+  end
+
   describe "ExLinear.Issue" do
     test "label_names returns labels" do
       issue = %Issue{id: "1", labels: ["frontend", "infra"]}
