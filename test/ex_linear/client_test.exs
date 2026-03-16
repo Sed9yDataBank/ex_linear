@@ -644,6 +644,86 @@ defmodule ExLinear.ClientTest do
     end
   end
 
+  describe "update_issue/3" do
+    test "succeeds and returns normalized issue when issueUpdate.success is true" do
+      set_request_fun(fn _c, payload, _headers ->
+        vars = payload["variables"] || %{}
+        assert vars["id"] == "issue-uuid"
+        input = vars["input"] || %{}
+        assert input["assigneeId"] == "user-1"
+        assert payload["query"] =~ "issueUpdate"
+
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "data" => %{
+               "issueUpdate" => %{
+                 "success" => true,
+                 "issue" => %{
+                   "id" => "issue-uuid",
+                   "identifier" => "MT-1",
+                   "title" => "Updated title",
+                   "description" => "Updated body",
+                   "priority" => 2,
+                   "state" => %{"name" => "In Progress"},
+                   "branchName" => nil,
+                   "url" => "https://linear.app/team/issue/MT-1",
+                   "assignee" => %{"id" => "user-1"},
+                   "labels" => %{"nodes" => []},
+                   "createdAt" => "2026-01-15T12:00:00Z",
+                   "updatedAt" => "2026-01-15T13:00:00Z"
+                 }
+               }
+             }
+           }
+         }}
+      end)
+
+      input = %Issue.UpdateInput{assignee_id: "user-1"}
+
+      assert {:ok, %Issue{} = issue} =
+               Client.update_issue(@base_config, "issue-uuid", input)
+
+      assert issue.id == "issue-uuid"
+      assert issue.identifier == "MT-1"
+      assert issue.title == "Updated title"
+      assert issue.assignee_id == "user-1"
+      assert issue.state == "In Progress"
+    end
+
+    test "returns issue_update_failed when success is false" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok, %{status: 200, body: %{"data" => %{"issueUpdate" => %{"success" => false}}}}}
+      end)
+
+      input = %Issue.UpdateInput{assignee_id: "user-1"}
+
+      assert {:error, :issue_update_failed} =
+               Client.update_issue(@base_config, "issue-uuid", input)
+    end
+
+    test "returns issue_update_failed when issue is missing in response" do
+      set_request_fun(fn _c, _payload, _headers ->
+        {:ok, %{status: 200, body: %{"data" => %{"issueUpdate" => %{"success" => true}}}}}
+      end)
+
+      input = %Issue.UpdateInput{title: "New title"}
+
+      assert {:error, :issue_update_failed} =
+               Client.update_issue(@base_config, "issue-uuid", input)
+    end
+
+    test "propagates transport error" do
+      set_request_fun(fn _c, _payload, _headers -> {:error, :timeout} end)
+
+      input = %Issue.UpdateInput{assignee_id: "user-1"}
+
+      assert {:error, {:linear_api_request, :timeout}} =
+               Client.update_issue(@base_config, "issue-uuid", input)
+    end
+  end
+
   describe "update_issue_state/3" do
     test "succeeds when state lookup and issueUpdate both succeed" do
       parent = self()

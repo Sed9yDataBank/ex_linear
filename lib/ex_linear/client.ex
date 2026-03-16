@@ -7,7 +7,7 @@ defmodule ExLinear.Client do
   """
 
   require Logger
-  alias ExLinear.{Config, Issue, Issue.CreateInput}
+  alias ExLinear.{Config, Issue, Issue.CreateInput, Issue.UpdateInput}
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
@@ -109,6 +109,36 @@ defmodule ExLinear.Client do
   @issue_create_mutation """
   mutation IssueCreate($input: IssueCreateInput!) {
     issueCreate(input: $input) {
+      success
+      issue {
+        id
+        identifier
+        title
+        description
+        priority
+        state {
+          name
+        }
+        branchName
+        url
+        assignee {
+          id
+        }
+        labels {
+          nodes {
+            name
+          }
+        }
+        createdAt
+        updatedAt
+      }
+    }
+  }
+  """
+
+  @issue_update_mutation """
+  mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+    issueUpdate(id: $id, input: $input) {
       success
       issue {
         id
@@ -278,10 +308,31 @@ defmodule ExLinear.Client do
     with {:ok, body} <- graphql(c, @issue_create_mutation, variables),
          true <- get_in(body, ["data", "issueCreate", "success"]) == true,
          issue when is_map(issue) <- get_in(body, ["data", "issueCreate", "issue"]) do
-      {:ok, normalize_issue(issue, nil)}
+      {:ok, normalize_issue(issue)}
     else
       false -> {:error, :issue_create_failed}
       nil -> {:error, :issue_create_failed}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Partially updates an issue. Returns the updated issue. Use for assignee, state, description, priority, etc.
+  """
+  @spec update_issue(Config.t() | keyword(), String.t(), UpdateInput.t()) ::
+          {:ok, Issue.t()} | {:error, term()}
+  def update_issue(config, issue_id, %UpdateInput{} = input)
+      when is_binary(issue_id) do
+    c = normalize_config(config)
+    variables = %{"id" => issue_id, "input" => UpdateInput.to_input_map(input)}
+
+    with {:ok, body} <- graphql(c, @issue_update_mutation, variables),
+         true <- get_in(body, ["data", "issueUpdate", "success"]) == true,
+         issue when is_map(issue) <- get_in(body, ["data", "issueUpdate", "issue"]) do
+      {:ok, normalize_issue(issue)}
+    else
+      false -> {:error, :issue_update_failed}
+      nil -> {:error, :issue_update_failed}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -578,6 +629,8 @@ defmodule ExLinear.Client do
 
   defp next_page_cursor(%{has_next_page: true}), do: {:error, :linear_missing_end_cursor}
   defp next_page_cursor(_), do: :done
+
+  defp normalize_issue(issue) when is_map(issue), do: normalize_issue(issue, nil)
 
   defp normalize_issue(issue, assignee_filter) when is_map(issue) do
     assignee = issue["assignee"]
